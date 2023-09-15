@@ -1,0 +1,10 @@
+-[x] setup watson STT service : cloud.ibm.com/catalog
+-[] clone live stt code: https"//github
+
+
+
+
+
+
+APIKey = "apikey": "ECG0Aa9naR9OApo2QgHrdZILADRSudpQpt3d8AXShHl3"
+Region : eu-gb
