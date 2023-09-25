@@ -1,4 +1,90 @@
 #!/usr/bin/python3
+import queue
+import sounddevice as sd
+from vosk import Model, KaldiRecognizer
+import sys
+import json
+import tkinter as tk
+from threading import Thread  # Import the Thread class
+
+'''This script processes audio input from the microphone and displays the transcribed text.'''
+
+# Create a flag to track recording status
+recording = False
+
+# Create a variable to store the recording duration (in seconds)
+# recording_duration = 5
+
+# list all audio devices known to your system
+print("Display input/output devices")
+print(sd.query_devices())
+
+# get the samplerate - this is needed by the Kaldi recognizer
+device_info = sd.query_devices(sd.default.device[0], 'input')
+samplerate = int(device_info['default_samplerate'])
+
+# display the default input device
+print("===> Initial Default Device Number:{} Description: {}".format(sd.default.device[0], device_info))
+
+# setup queue and callback function
+q = queue.Queue()
+
+def recordCallback(indata, frames, time, status):
+    if status:
+        print(status, file=sys.stderr)
+    if recording:
+        q.put(bytes(indata))
+
+# build the model and recognizer objects.
+print("===> Build the model and recognizer objects.  This will take a few minutes.")
+model = Model(model_name='vosk-model-en-us-0.22')
+recognizer = KaldiRecognizer(model, samplerate)
+recognizer.SetWords(False)
+
+def start_recording():
+    global recording 
+    recording = True 
+    record_button.config(bg="red",activebackground="red",text="Recording")
+
+def stop_recording(event):
+    global recording 
+    recording = False 
+    record_button.config(bg="green",text="Recording")
+
+# Function to toggle recognition
+"""
+IF you want to use the button with a duration 
+time un comment the following function 
+"""
+# def toggle_recognition():
+#     global recording
+#     if not recording:
+#         recording = True
+#         record_button.config(bg="green", text="Recording")  # Change button color and text when recording
+#         record_button.after(recording_duration * 1000, toggle_recognition)  # Schedule the toggle after the specified duration
+    
+#     else:
+#         recording = False
+#         record_button.config(bg="yellow", text="Recording")  # Change button color and text back to original state
+
+
+# Function to start the GUI in a separate thread
+def start_gui():
+    # Create the GUI window
+    window = tk.Tk()
+    window.title("STT")
+    # Create a single button for toggling recognition
+    global record_button
+    record_button = tk.Button(window, text="Recording", bg="green", width=20, height=3)
+    record_button.pack(pady=10)
+
+    record_button.bind("<ButtonPress-1>", lambda event: start_recording())
+    record_button.bind("<ButtonRelease-1>", lambda event: stop_recording(event))
+
+    # Start the GUI main loop
+    window.mainloop()
+
+
 import json
 from voice_commands.srv import Dashboard, DashboardResponse
 import rospy
@@ -14,6 +100,7 @@ import replicate
 
 
 def dashboard_prompt(dashboard_instruction):
+    ## ChatGPT gpt-3.5-turbo
     # dashboard_pre_prompt = "Given a list of commands, respond with the corresponding string text\
     #     drill holes 'start,drill' start drilling operation\
     #     debur holes 'start,debur' start deburring operation\
@@ -45,6 +132,7 @@ def dashboard_prompt(dashboard_instruction):
     # # print(response_to_dashboard_text)
     # response_to_dashboard_text = response_to_dashboard["choices"][0]["message"]["content"].strip().split(',')
 
+    ## ChatGPT gpt-3.5-turbo
     # dashboard_pre_prompt = "Given a list of commands, respond with the corresponding string text\
     #     drill holes 1001 to 1015 'start,drill,json,1001,1015'\
     #     debur holes 1001 to 1015 'start,debur,json,1001,1015'\
@@ -71,6 +159,7 @@ def dashboard_prompt(dashboard_instruction):
     #     max_tokens=100
     # )
     
+    ## ChatGPT text-davinci-003
     # dashboard_pre_prompt = "You are a text-generating robot, you follow given patterns exactly. Given a list of commands, respond with the corresponding string text\
     #         drill holes 1001 to 1015\
     #         'start,drill,json,1001,1015'\
@@ -111,6 +200,7 @@ def dashboard_prompt(dashboard_instruction):
     # print(response_to_dashboard_text)
     # response_to_dashboard_text = response_to_dashboard["choices"][0]["message"]["content"].strip().split(',')
 
+    ## Llama2-70b-chat
     pre_prompt = "Given a list of commands, respond with the corresponding text\
         drill holes 1001 to 1015 'start,drill,json,1001,1015'\
         debur holes 1001 to 1015 'start,debur,json,1001,1015'\
@@ -138,7 +228,7 @@ def dashboard_prompt(dashboard_instruction):
         },
     )  # Model parameters
 
-    print("Test debur")
+    # print("Test debur")
 
     response_to_dashboard_text = ""
     response_to_dashboard = []
@@ -149,7 +239,7 @@ def dashboard_prompt(dashboard_instruction):
     # print(response_to_dashboard)
     response_to_dashboard_text = response_to_dashboard_text.strip().split(",")
 
-    print(response_to_dashboard_text)
+    # print(response_to_dashboard_text)
     
     
     if 'json' in response_to_dashboard_text:
@@ -203,17 +293,49 @@ def dashboard_client(req):
         print("Service call failed: %s"%e)
 
 if __name__ == "__main__":
-    prompt = sys.argv[1]
-    print(prompt)
-    response = dashboard_prompt(prompt)
-    print(response)
-    # response = ['start', 'debur', 'json', '101', '102', '1001', '1015']
-    if response[0] != 'start':
-        req = response[0]
-        print("Requesting %s"%(req))
-        print("%s => %s"%(req, dashboard_client(req)))
-    elif response[0] == 'start':
-        req = response[0]+","+response[1]
-        print("Requesting %s"%(req))
-        print("%s => %s"%(req,dashboard_client(req)))
+    # Create a thread for the GUI
+    gui_thread = Thread(target=start_gui)
+    print("===> Begin recording. Press Ctrl+C to stop the recording ")
+
+
+    try:
+        with sd.RawInputStream(dtype='int16',
+                            channels=1,
+                            callback=recordCallback):
+            # Start the GUI thread
+            gui_thread.start()
+
+            while True:
+                # get the prompt from stt
+                data = q.get()
+                if recording and recognizer.AcceptWaveform(data):
+                    recognizerResult = recognizer.Result()
+                    # convert the recognizerResult string into a dictionary
+                    resultDict = json.loads(recognizerResult)
+                    if not resultDict.get("text", "") == "":
+                        print(recognizerResult)
+                        prompt = recognizerResult['text']
+                        
+                        # pass it to the gen-ai model
+                        response = dashboard_prompt(prompt)
+                        print(response)
+                        # response = ['start', 'debur', 'json', '101', '102', '1001', '1015']
+                        if response[0] != 'start':
+                            req = response[0]
+                            print("Requesting %s"%(req))
+                            print("%s => %s"%(req, dashboard_client(req)))
+                        elif response[0] == 'start':
+                            req = response[0]+","+response[1]
+                            print("Requesting %s"%(req))
+                            print("%s => %s"%(req,dashboard_client(req)))
+                    else:
+                        print("no input sound")
+
+    except KeyboardInterrupt:
+        print('===> Finished Recording')
+        print("Exiting ...")
+        
+    # prompt = sys.argv[1]
+    # print(prompt)
+    
 
